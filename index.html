@@ -137,7 +137,7 @@
     <script src="fetch.js"></script>
     <script>
         const projData = new Promise((resolve, reject) => {
-    fetch('Datos/Progreso Censos de Gobierno - Hoja 1.tsv')
+    fetch('https://docs.google.com/spreadsheets/d/e/2PACX-1vR4aWi53AHrp-Km4xAuFbgAZjsZAXazfDxSarEIjz3KqTdpRU5cZJkorGEUJr8uzqe06lkITt-ZenQd/pub?gid=0&single=true&output=tsv')
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
