@@ -44,6 +44,11 @@
         .gantt-chart {
             display: block;
         }
+        /* Adjusted margin-bottom for gantt-item to ensure enough space for wrapped text */
+        .gantt-item{
+            margin-bottom: 0.5rem; /* Reduced to avoid excessive spacing, adjust as needed */
+            margin-top: 0.5rem;
+        }
 
         /* ESTILOS DE BARRAS Y TEXTO: PUEDES AJUSTAR ESTO */
         .task-bar {
@@ -120,7 +125,7 @@
 </head>
 <body>
     <div class="header-section">
-        <h1>Censos Nacionales</h1>
+        <h1>Censo Nacional de Gobiernos Estatales</h1>
 
         <div class="project-progress-container">
             <h2>Progreso General</h2>
@@ -134,476 +139,559 @@
         <h2>Detalle de Progreso</h2>
         <svg class="gantt-chart"></svg>
     </div>
-    <script src="fetch.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://momentjs.com/downloads/moment.min.js"></script>
     <script>
-        const projData = new Promise((resolve, reject) => {
-    fetch('https://docs.google.com/spreadsheets/d/e/2PACX-1vR4aWi53AHrp-Km4xAuFbgAZjsZAXazfDxSarEIjz3KqTdpRU5cZJkorGEUJr8uzqe06lkITt-ZenQd/pub?gid=0&single=true&output=tsv')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.text();
-        })
-        .then(text => {
-            const rows = text.split('\n');
-            const columns = rows[0].split('\t');
-            const data = rows.slice(1).map(row => {
-                const values = row.split('\t');
-                const obj = {};
-                columns.forEach((col, i) => {
-                    obj[col.trim()] = (values[i] || '').trim();
-                });
-                return obj;
-            });
-            resolve(data);
-        })
-        .catch(reject);
-});
-//let projectData;
-projData.then(data => {
-        //Map CSV data to the required projectData structure
-        projectData2 = {
-            project_name: "Censos Nacionales",
-            start_date: "2025-01-01",
-            end_date: "2026-02-28",
-            tasks: []
-        };
-
-        // Group data by CENSO
-        const tasksMap = {};
+        // Utility function to parse date strings
         function parseDMYtoYMD(dmy) {
             if (!dmy) return '';
             const parts = dmy.split('-');
             if (parts.length !== 3) return dmy;
-            // Ensure day and month are always two digits
             const day = parts[0].padStart(2, '0');
             const month = parts[1].padStart(2, '0');
             const year = parts[2];
             return `${year}-${month}-${day}`;
         }
 
-        data.slice(1, -1).forEach((item,index) => {
-            const censo = item['CENSO'];
-            if (!tasksMap[censo]) {
-            tasksMap[censo] = {
-                id: 'T'+(index+1),
-                name: censo,
-                start: parseDMYtoYMD(item['Fecha-Inicio']),
-                end: parseDMYtoYMD(item['Fecha-Fin']),
-                Observación:item['Observación'],
-                overall_progress: item['Progreso'] ? parseFloat(item['Progreso'].replace('%', '')) / 100 : 0,
-                subtasks: []
+        // Define the date parser once
+        const parseDate = d3.timeParse("%Y-%m-%d");
+
+        const projData = new Promise((resolve, reject) => {
+            fetch('https://docs.google.com/spreadsheets/d/e/2PACX-1vQwHJNqQSNO6UlSJumk-V8_Ja-o6_9S4Ja3Y7qxt9kpYE_9rwGKdE7UYAdUqcIYDA/pub?gid=1197124530&single=true&output=tsv')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.text();
+                })
+                .then(text => {
+                    const rows = text.split('\n');
+                    const columns = rows[0].split('\t');
+                    const data = rows.slice(1).map(row => {
+                        const values = row.split('\t');
+                        const obj = {};
+                        columns.forEach((col, i) => {
+                            obj[col.trim()] = (values[i] || '').trim();
+                        });
+                        return obj;
+                    });
+                    resolve(data);
+                })
+                .catch(reject);
+        });
+
+        projData.then(data => {
+
+            // Nuevo procesamiento para 3 niveles: tier1 > CENSO > TAREA
+            let projectData2 = {
+                project_name: "Censos Nacionales",
+                start_date: "2025-06-01",
+                end_date: "2026-02-28",
+                tasks: []
             };
-            }
-            if (item['TAREA']) {
-            tasksMap[censo].subtasks.push({
-                id: 'S'+index,
-                name: item['TAREA'],
-                start: parseDMYtoYMD(item['Fecha-Inicio']),
-                end: parseDMYtoYMD(item['Fecha-Fin']),
-                Observación:item['Observación'],
-                progress: item['Progreso'] ? parseFloat(item['Progreso'].replace('%', '')) / 100 : 0
+
+            const tier1Map = {};
+            data.slice(1, -1).forEach((item, index) => {
+                const tier1 = item['tier1'] || 'Sin tier1';
+                const censo = item['CENSO'] || ' ';
+                const tarea = item['TAREA'] || '';
+
+                if (!tier1Map[tier1]) {
+                    tier1Map[tier1] = {
+                        id: 'T1_' + (Object.keys(tier1Map).length + 1),
+                        name: tier1,
+                        start: parseDMYtoYMD(item['Fecha-Inicio']),
+                        end: parseDMYtoYMD(item['Fecha-Fin']),
+                        Observación: item['Observación'],
+                        overall_progress: 0,
+                        subtasks: {}, // CENSO
+                    };
+                }
+                if (!tier1Map[tier1].subtasks[censo]) {
+                    tier1Map[tier1].subtasks[censo] = {
+                        id: 'T2_' + (Object.keys(tier1Map[tier1].subtasks).length + 1) + '_' + tier1Map[tier1].id,
+                        name: censo,
+                        start: parseDMYtoYMD(item['Fecha-Inicio']),
+                        end: parseDMYtoYMD(item['Fecha-Fin']),
+                        Observación: item['Observación'],
+                        overall_progress: 0,
+                        subtasks: [] // TAREA
+                    };
+                }
+                if (tarea) {
+                    tier1Map[tier1].subtasks[censo].subtasks.push({
+                        id: 'T3_' + index + '_' + tier1Map[tier1].subtasks[censo].id,
+                        name: tarea,
+                        start: parseDMYtoYMD(item['Fecha-Inicio']),
+                        end: parseDMYtoYMD(item['Fecha-Fin']),
+                        Observación: item['Observación'],
+                        progress: item['Progreso'] ? parseFloat(item['Progreso'].replace('%', '')) / 100 : 0
+                    });
+                }
             });
-            }
-        });
 
-        projectData2.tasks = Object.values(tasksMap);
-
-        //console.log(projectData2.tasks);
-        
-        // const projectData = {
-        //     "project_name": "Censos Nacionales",
-        //     "start_date": "2024-06-01", // Fecha de inicio del proyecto (formato YYYY-MM-DD)
-        //     "end_date": "2025-02-28",   // Fecha de fin del proyecto (formato YYYY-MM-DD)
-        //     "tasks": [
-        //         {
-        //             "id": "T1",
-        //             "name": "1. Censo Nacional de Gobiernos Estatales",
-        //             "start": "2024-06-01",
-        //             "end": "2024-10-31",
-        //             "overall_progress": 0.6, // Progreso general de la tarea (0.0 a 1.0, ej: 0.6 para 60%)
-        //             "subtasks": [
-        //                 { "id": "S1.1", "name": "1.1 Integración de información preliminar", "start": "2024-06-01", "end": "2024-07-15", "progress": 1.0 },
-        //                 { "id": "S1.2", "name": "1.2 Revisión primaria y ajustes", "start": "2024-07-16", "end": "2024-08-30", "progress": 0.9 },
-        //                 { "id": "S1.3", "name": "1.3 Revisión OC y liberación definitiva", "start": "2024-09-01", "end": "2024-09-30", "progress": 0.3 },
-        //                 { "id": "S1.4", "name": "1.4 Recuperación de firmas y formalización", "start": "2024-10-01", "end": "2024-10-15", "progress": 0.0 },
-        //                 { "id": "S1.5", "name": "1.5 Difusión de resultados", "start": "2024-10-16", "end": "2024-10-31", "progress": 0.0 }
-        //             ]
-        //         },
-        //         {
-        //             "id": "T2",
-        //             "name": "2. Censo Nacional de Gobiernos Municipales y Demarcaciones",
-        //             "start": "2024-07-01",
-        //             "end": "2024-11-30",
-        //             "overall_progress": 0.4,
-        //             "subtasks": [
-        //                 { "id": "S2.1", "name": "2.1 Integración de información preliminar", "start": "2024-07-01", "end": "2024-08-15", "progress": 0.8 },
-        //                 { "id": "S2.2", "name": "2.2 Revisión primaria y ajustes", "start": "2024-08-16", "end": "2024-09-30", "progress": 0.1 },
-        //                 { "id": "S2.3", "name": "2.3 Revisión OC y liberación definitiva", "start": "2024-10-01", "end": "2024-10-31", "progress": 0.0 },
-        //                 { "id": "S2.4", "name": "2.4 Recuperación de firmas y formalización", "start": "2024-11-01", "end": "2024-11-15", "progress": 0.0 },
-        //                 { "id": "S2.5", "name": "2.5 Difusión de resultados", "start": "2024-11-16", "end": "2024-11-30", "progress": 0.0 }
-        //             ]
-        //         },
-        //         {
-        //             "id": "T3",
-        //             "name": "3. Censo Nacional de Sistemas Penitenciarios Estatales",
-        //             "start": "2024-08-01",
-        //             "end": "2024-12-31",
-        //             "overall_progress": 0.2,
-        //             "subtasks": [
-        //                 { "id": "S3.1", "name": "3.1 Integración de información preliminar", "start": "2024-08-01", "end": "2024-09-15", "progress": 0.5 },
-        //                 { "id": "S3.2", "name": "3.2 Revisión primaria y ajustes", "start": "2024-09-16", "end": "2024-10-31", "progress": 0.0 },
-        //                 { "id": "S3.3", "name": "3.3 Revisión OC y liberación definitiva", "start": "2024-11-01", "end": "2024-11-30", "progress": 0.0 },
-        //                 { "id": "S3.4", "name": "3.4 Recuperación de firmas y formalización", "start": "2024-12-01", "end": "2024-12-15", "progress": 0.0 },
-        //                 { "id": "S3.5", "name": "3.5 Difusión de resultados", "start": "2024-12-16", "end": "2024-12-31", "progress": 0.0 }
-        //             ]
-        //         },
-        //         {
-        //             "id": "T4",
-        //             "name": "4. Censo Nacional de Seguridad Pública Estatal",
-        //             "start": "2024-09-01",
-        //             "end": "2025-01-31",
-        //             "overall_progress": 0.1,
-        //             "subtasks": [
-        //                 { "id": "S4.1", "name": "4.1 Integración de información preliminar", "start": "2024-09-01", "end": "2024-10-15", "progress": 0.3 },
-        //                 { "id": "S4.2", "name": "4.2 Revisión primaria y ajustes", "start": "2024-10-16", "end": "2024-11-30", "progress": 0.0 },
-        //                 { "id": "S4.3", "name": "4.3 Revisión OC y liberación definitiva", "start": "2024-12-01", "end": "2024-12-31", "progress": 0.0 },
-        //                 { "id": "S4.4", "name": "4.4 Recuperación de firmas y formalización", "start": "2025-01-01", "end": "2025-01-15", "progress": 0.0 },
-        //                 { "id": "S4.5", "name": "4.5 Difusión de resultados", "start": "2025-01-16", "end": "2025-01-31", "progress": 0.0 }
-        //             ]
-        //         },
-        //         {
-        //             "id": "T5",
-        //             "name": "5. Censo Nacional de Procuración de Justicia Estatal",
-        //             "start": "2024-10-01",
-        //             "end": "2025-02-28",
-        //             "overall_progress": 0.05,
-        //             "subtasks": [
-        //                 { "id": "S5.1", "name": "5.1 Integración de información preliminar", "start": "2024-10-01", "end": "2024-11-15", "progress": 0.1 },
-        //                 { "id": "S5.2", "name": "5.2 Revisión primaria y ajustes", "start": "2024-11-16", "end": "2024-12-31", "progress": 0.0 },
-        //                 { "id": "S5.3", "name": "5.3 Revisión OC y liberación definitiva", "start": "2025-01-01", "end": "2025-01-31", "progress": 0.0 },
-        //                 { "id": "S5.4", "name": "5.4 Recuperación de firmas y formalización", "start": "2025-02-01", "end": "2025-02-15", "progress": 0.0 },
-        //                 { "id": "S5.5", "name": "5.5 Difusión de resultados", "start": "2025-02-16", "end": "2025-02-28", "progress": 0.0 }
-        //             ]
-        //         },
-        //         {
-        //             "id": "T6",
-        //             "name": "6. Censo Nacional de Impartición de Justicia Estatal",
-        //             "start": "2024-11-01",
-        //             "end": "2025-02-28",
-        //             "overall_progress": 0.0,
-        //             "subtasks": [
-        //                 { "id": "S6.1", "name": "6.1 Integración de información preliminar", "start": "2024-11-01", "end": "2024-12-15", "progress": 0.0 },
-        //                 { "id": "S6.2", "name": "6.2 Revisión primaria y ajustes", "start": "2024-12-16", "end": "2025-01-31", "progress": 0.0 },
-        //                 { "id": "S6.3", "name": "6.3 Revisión OC y liberación definitiva", "start": "2025-02-01", "end": "2025-02-28", "progress": 0.0 },
-        //                 { "id": "S6.4", "name": "6.4 Recuperación de firmas y formalización", "start": "2025-02-20", "end": "2025-02-28", "progress": 0.0 },
-        //                 { "id": "S6.5", "name": "6.5 Difusión de resultados", "start": "2025-02-25", "end": "2025-02-28", "progress": 0.0 }
-        //             ]
-        //         }
-        //     ]
-        // };
-
-        const taskRowHeight = 25;
-        const indentSubtask = 20;
-        const labelMargin = 10;
-        const maxLabelWidth = 220;
-
-        // --- CÓDIGO DEL GRÁFICO (NO ES NECESARIO TOCAR ESTO NORMALMENTE) ---
-        const margin = { top: 50, right: 30, bottom: 60, left: maxLabelWidth + 10 };
-        const width = window.innerWidth * 0.96 - margin.left - margin.right - 30;
-        const barHeight = taskRowHeight - 7;
-        const allItems = [];
-        projectData2.tasks.forEach(task => {
-            allItems.push({ type: 'task', data: task });
-            task.subtasks.forEach(subtask => {
-                allItems.push({ type: 'subtask', data: subtask, parentId: task.id });
+            // Calcular progreso de cada CENSO (tier2) y tier1
+            Object.values(tier1Map).forEach(t1 => {
+                Object.values(t1.subtasks).forEach(t2 => {
+                    // Progreso promedio de las tareas tier3
+                    if (t2.subtasks.length > 0) {
+                        t2.overall_progress = t2.subtasks.reduce((acc, st) => acc + (st.progress || 0), 0) / t2.subtasks.length;
+                    } else {
+                        t2.overall_progress = 0;
+                    }
+                });
+                // Progreso promedio de los censos (tier2)
+                const t2s = Object.values(t1.subtasks);
+                if (t2s.length > 0) {
+                    t1.overall_progress = t2s.reduce((acc, t2) => acc + (t2.overall_progress || 0), 0) / t2s.length;
+                } else {
+                    t1.overall_progress = 0;
+                }
             });
-        });
 
-        const height = allItems.length * taskRowHeight;
+            // Convertir a arreglo final para visualización
+            projectData2.tasks = Object.values(tier1Map).map(t1 => {
+                return {
+                    ...t1,
+                    subtasks: Object.values(t1.subtasks)
+                };
+            });
 
-        const xScale = d3.scaleTime()
-            .domain([d3.timeParse("%Y-%m-%d")(projectData2.start_date), d3.timeParse("%Y-%m-%d")(projectData2.end_date)])
-            .range([0, width]);
+            const defaultTaskHeight = 25; // Minimum height for a task/subtask item
+            const indentTier2 = 20;
+            const indentTier3 = 40;
+            const labelMargin = 10;
+            const maxLabelWidth = 220;
+            const lineHeight = 1.2; // Multiplier for line height in ems
+            const fontSize = 11; // Font size in pixels
 
-        const yScale = d3.scaleBand()
-            .domain(allItems.map(d => d.data.id))
-            .range([0, height])
-            .paddingInner(0.1);
+            const margin = { top: 50, right: 30, bottom: 60, left: maxLabelWidth + 10 };
+            const width = window.innerWidth * 0.96 - margin.left - margin.right - 30;
+            const barHeight = 18; // Height of the visual bar
 
-        const svg = d3.select(".gantt-chart")
-            .attr("width", width + margin.left + margin.right)
-            .attr("height", height + margin.top + margin.bottom)
-            .style("max-width", "100%")
-            .append("g")
-            .attr("transform", `translate(${margin.left},${margin.top})`);
+            let currentYPosition = 0;
+            const allItems = [];
+            let itemYPositions = {}; // Stores the starting Y position for each item
+            let itemHeights = {}; // Stores the calculated height for each item
 
-        const tooltip = d3.select("body").append("div").attr("class", "tooltip");
+            // Temporarily append an SVG element to the body to measure text lengths
+            // This is crucial because getComputedTextLength() requires an SVG context.
+            const tempSvg = d3.select("body").append("svg")
+                .attr("width", 0).attr("height", 0)
+                .style("position", "absolute").style("overflow", "hidden");
 
-        const items = svg.selectAll(".gantt-item")
-            .data(allItems)
-            .enter()
-            .append("g")
-            .attr("class", "gantt-item")
-            .attr("transform", d => `translate(0, ${yScale(d.data.id)})`);
 
-        // Nombres de las tareas/subtareas
-        items.append("text")
-            .attr("class", "task-name")
-            .attr("x", d => - (margin.left - labelMargin) + (d.type === 'subtask' ? indentSubtask : 0))
-            .attr("y", taskRowHeight / 2)
-            .attr("dy", "0.35em")
-            .each(function(d) {
-                const name = d.data.name;
-                const textElement = d3.select(this);
-                textElement.text('');
+            // Recorrer los 3 niveles y calcular posiciones e indentaciones
+            projectData2.tasks.forEach(tier1 => {
+                // tier1
+                const tier1Obj = { type: 'tier1', data: tier1 };
+                let tempTextElement = tempSvg.append("text").style("font-size", `${fontSize}px`);
+                let words = tier1.name.split(/\s+/).reverse();
+                let line = [], lineNumber = 0;
+                let word;
+                let tspan = tempTextElement.append("tspan").text("");
+                const availableWidth1 = maxLabelWidth - labelMargin;
+                while (word = words.pop()) {
+                    line.push(word);
+                    tspan.text(line.join(" "));
+                    if (tspan.node().getComputedTextLength() > availableWidth1 && line.length > 1) {
+                        line.pop();
+                        tspan.text(line.join(" "));
+                        line = [word];
+                        lineNumber++;
+                        tspan = tempTextElement.append("tspan").text(word);
+                    }
+                }
+                const tier1Lines = lineNumber + 1;
+                tempTextElement.remove();
+                tier1Obj.height = Math.max(defaultTaskHeight, tier1Lines * fontSize * lineHeight + (defaultTaskHeight - barHeight));
+                tier1Obj.y = currentYPosition;
+                allItems.push(tier1Obj);
+                itemHeights[tier1.id] = tier1Obj.height;
+                itemYPositions[tier1.id] = currentYPosition;
+                currentYPosition += tier1Obj.height;
 
-                const wrapText = (text, width) => {
-                    const words = text.split(/\s+/).reverse();
-                    let line = [], lineNumber = 0, lineHeight = 1.2;
-                    let word;
-                    let tspan = textElement.append("tspan")
-                        .attr("x", textElement.attr("x"))
-                        .attr("y", textElement.attr("y"))
-                        .attr("dy", "0em");
-
+                // tier2 (CENSO)
+                tier1.subtasks.forEach(tier2 => {
+                    const tier2Obj = { type: 'tier2', data: tier2, parentId: tier1.id };
+                    tempTextElement = tempSvg.append("text").style("font-size", `${fontSize}px`);
+                    words = tier2.name.split(/\s+/).reverse();
+                    line = [], lineNumber = 0;
+                    tspan = tempTextElement.append("tspan").text("");
+                    const availableWidth2 = maxLabelWidth - indentTier2 - labelMargin;
                     while (word = words.pop()) {
                         line.push(word);
                         tspan.text(line.join(" "));
-                        if (tspan.node().getComputedTextLength() > width && line.length > 1) {
+                        if (tspan.node().getComputedTextLength() > availableWidth2 && line.length > 1) {
                             line.pop();
                             tspan.text(line.join(" "));
                             line = [word];
-                            tspan = textElement.append("tspan")
-                                .attr("x", textElement.attr("x"))
-                                .attr("y", textElement.attr("y"))
-                                .attr("dy", ++lineNumber * lineHeight + "em")
-                                .text(word);
+                            lineNumber++;
+                            tspan = tempTextElement.append("tspan").text(word);
                         }
                     }
-                    if (lineNumber > 0) {
-                        textElement.selectAll("tspan")
-                            .attr("y", (d, i) => (taskRowHeight / 2) - (lineNumber * lineHeight * 0.5 * (11/12)) + (i * lineHeight * (11/12)));
-                    }
-                };
+                    const tier2Lines = lineNumber + 1;
+                    tempTextElement.remove();
+                    tier2Obj.height = Math.max(defaultTaskHeight, tier2Lines * fontSize * lineHeight + (defaultTaskHeight - barHeight));
+                    tier2Obj.y = currentYPosition;
+                    allItems.push(tier2Obj);
+                    itemHeights[tier2.id] = tier2Obj.height;
+                    itemYPositions[tier2.id] = currentYPosition;
+                    currentYPosition += tier2Obj.height;
 
-                const availableWidth = maxLabelWidth - (d.type === 'subtask' ? indentSubtask : 0) - labelMargin;
-                wrapText(name, availableWidth);
-            });
-
-        // Barras de Tareas (fondo)
-        items.append("rect")
-            .attr("class", "task-bar")
-            .attr("x", d => xScale(d3.timeParse("%Y-%m-%d")(d.data.start)) + (d.type === 'subtask' ? indentSubtask : 0))
-            .attr("width", d => {
-                const start = d3.timeParse("%Y-%m-%d")(d.data.start);
-                const end = d3.timeParse("%Y-%m-%d")(d.data.end);
-                return xScale(end) - xScale(start);
-            })
-            .attr("height", barHeight)
-            .attr("fill", d => d.type === 'task' ? '#4CAF50' : '#81C784')
-            .on("mouseover", function(event, d) {
-                tooltip.transition().duration(200).style("opacity", .9);
-                tooltip.html(`
-                    <strong>${d.data.name}</strong><br/>
-                    Inicio: ${d.data.start}<br/>
-                    Fin: ${d.data.end}<br/>
-                `)
-                .style("left", (event.pageX + 10) + "px")
-                .style("top", (event.pageY - 28) + "px");
-            })
-            .on("mouseout", function(d) {
-                tooltip.transition().duration(500).style("opacity", 0);
-            });
-
-        // Barras de Progreso (superpuestas)
-        items.append("rect")
-            .attr("class", "progress-bar")
-            .attr("x", d => xScale(d3.timeParse("%Y-%m-%d")(d.data.start)) + (d.type === 'subtask' ? indentSubtask : 0))
-            .attr("width", d => {
-                const totalWidth = xScale(d3.timeParse("%Y-%m-%d")(d.data.end)) - xScale(d3.timeParse("%Y-%m-%d")(d.data.start));
-                const progress = d.type === 'task' ? d.data.overall_progress : d.data.progress;
-                return totalWidth * progress;
-            })
-            .attr("height", barHeight)
-            .attr("fill", d => {
-                const p = d.type === 'task' ? d.data.overall_progress : d.data.progress;
-                if (p === 1.0) return '#4CAF50';
-                if (p > 0.75) return '#66BB6A';
-                if (p > 0.5) return '#FFC107';
-                if (p > 0.25) return '#FFD54F';
-                return '#FFEB3B';
-            })
-            .on("mouseover", function(event, d) {
-                tooltip.transition().duration(200).style("opacity", .9);
-
-                // Obtener el texto de Observación
-                const observationText = d.type === 'task' ? d.data.Observación : ''; // Solo para tareas principales
-
-                let observationHtml = '';
-                if (observationText) {
-                    // Dividir el texto por ';' y crear elementos de lista
-                    const points = observationText.split(';');
-                    observationHtml = '<strong>Observaciones:</strong><ul style="text-align: justify;">';
-                    points.forEach(point => {
-                        // Eliminar espacios en blanco alrededor de cada punto y solo agregar si no está vacío
-                        const trimmedPoint = point.trim();
-                        if (trimmedPoint) {
-                            observationHtml += `<li>${trimmedPoint}</li>`;
+                    // tier3 (TAREA)
+                    tier2.subtasks.forEach(tier3 => {
+                        const tier3Obj = { type: 'tier3', data: tier3, parentId: tier2.id };
+                        tempTextElement = tempSvg.append("text").style("font-size", `${fontSize}px`);
+                        words = tier3.name.split(/\s+/).reverse();
+                        line = [], lineNumber = 0;
+                        tspan = tempTextElement.append("tspan").text("");
+                        const availableWidth3 = maxLabelWidth - indentTier3 - labelMargin;
+                        while (word = words.pop()) {
+                            line.push(word);
+                            tspan.text(line.join(" "));
+                            if (tspan.node().getComputedTextLength() > availableWidth3 && line.length > 1) {
+                                line.pop();
+                                tspan.text(line.join(" "));
+                                line = [word];
+                                lineNumber++;
+                                tspan = tempTextElement.append("tspan").text(word);
+                            }
                         }
+                        const tier3Lines = lineNumber + 1;
+                        tempTextElement.remove();
+                        tier3Obj.height = Math.max(defaultTaskHeight, tier3Lines * fontSize * lineHeight + (defaultTaskHeight - barHeight));
+                        tier3Obj.y = currentYPosition;
+                        allItems.push(tier3Obj);
+                        itemHeights[tier3.id] = tier3Obj.height;
+                        itemYPositions[tier3.id] = currentYPosition;
+                        currentYPosition += tier3Obj.height;
                     });
-                    observationHtml += '</ul>';
-                }
-
-                tooltip.html(`
-                    
-                    ${observationHtml}
-                `)
-                .style("left", (event.pageX + 10) + "px")
-                .style("top", (event.pageY - 28) + "px");
-            })
-            .on("mouseout", function(d) {
-                tooltip.transition().duration(500).style("opacity", 0);
+                });
             });
 
-        // Texto de porcentaje dentro de las barras de progreso
-        items.append("text")
-            .attr("class", "progress-text")
-            .attr("x", d => {
-                const startX = xScale(d3.timeParse("%Y-%m-%d")(d.data.start)) + (d.type === 'subtask' ? indentSubtask : 0);
-                const totalWidth = xScale(d3.timeParse("%Y-%m-%d")(d.data.end)) - xScale(d3.timeParse("%Y-%m-%d")(d.data.start));
-                const progress = d.type === 'task' ? d.data.overall_progress : d.data.progress;
-                const progressWidth = totalWidth * progress;
-                if (progressWidth < 25) {
-                    return startX + progressWidth + 5;
-                }
-                return startX + (progressWidth / 2);
-            })
-            .attr("y", barHeight / 2)
-            .attr("dy", "0.35em")
-            .text(d => {
-                const progress = d.type === 'task' ? d.data.overall_progress : d.data.progress;
-                return progress === 0 ? '' : (progress * 100).toFixed(0) + '%';
-            })
-            .style("fill", function(d) {
-                const totalWidth = xScale(d3.timeParse("%Y-%m-%d")(d.data.end)) - xScale(d3.timeParse("%Y-%m-%d")(d.data.start));
-                const progress = d.type === 'task' ? d.data.overall_progress : d.data.progress;
-                const progressWidth = totalWidth * progress;
-                return progressWidth < 25 ? "#666" : "white";
-            })
-            .style("text-anchor", function(d) {
-                const totalWidth = xScale(d3.timeParse("%Y-%m-%d")(d.data.end)) - xScale(d3.timeParse("%Y-%m-%d")(d.data.start));
-                const progress = d.type === 'task' ? d.data.overall_progress : d.data.progress;
-                const progressWidth = totalWidth * progress;
-                return progressWidth < 25 ? "start" : "middle";
-            });
+            // Remove the temporary SVG after all measurements are done
+            tempSvg.remove();
+
+            const height = currentYPosition; // Total height of the SVG based on calculated item heights
+
+            const xScale = d3.scaleTime()
+                .domain([parseDate(projectData2.start_date), parseDate(projectData2.end_date)])
+                .range([0, width]);
+
+            // yScale is no longer scaleBand, but used to position groups based on pre-calculated Y positions
+            // The actual positioning is handled by the 'transform' attribute on the 'gantt-item' groups.
+
+            const svg = d3.select(".gantt-chart")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .style("max-width", "100%")
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            const tooltip = d3.select("body").append("div").attr("class", "tooltip");
+            
+            const items = svg.selectAll(".gantt-item")
+                .data(allItems)
+                .enter()
+                .append("g")
+                .attr("class", "gantt-item")
+                // Use the pre-calculated Y position for each group
+                .attr("transform", d => `translate(0, ${d.y})`);
+
+            // Nombres de las tareas/subtareas
+            items.append("text")
+                .attr("class", "task-name")
+                .attr("x", d => {
+                    if (d.type === 'tier1') return - (margin.left - labelMargin);
+                    if (d.type === 'tier2') return - (margin.left - labelMargin) + indentTier2;
+                    if (d.type === 'tier3') return - (margin.left - labelMargin) + indentTier3;
+                    return - (margin.left - labelMargin);
+                })
+                .attr("y", d => d.height / 2)
+                .attr("dominant-baseline", "middle")
+                .style("font-weight", d => d.type === 'tier1' ? 'bold' : 'normal')
+                .each(function(d) {
+                    const name = d.data.name;
+                    const textElement = d3.select(this);
+                    textElement.text('');
+                    const wrapText = (text, width, itemHeight) => {
+                        const words = text.split(/\s+/).reverse();
+                        let line = [], lineNumber = 0;
+                        let word;
+                        let tspan = textElement.append("tspan").attr("x", textElement.attr("x"));
+                        while (word = words.pop()) {
+                            line.push(word);
+                            tspan.text(line.join(" "));
+                            if (tspan.node().getComputedTextLength() > width && line.length > 1) {
+                                line.pop();
+                                tspan.text(line.join(" "));
+                                line = [word];
+                                lineNumber++;
+                                tspan = textElement.append("tspan").attr("x", textElement.attr("x")).text(word);
+                            }
+                        }
+                        const totalLines = lineNumber + 1;
+                        textElement.selectAll("tspan")
+                            .attr("y", (d, i) => (itemHeight / 2) - (totalLines / 2 - i - 0.5) * (fontSize * lineHeight));
+                    };
+                    let availableWidth = maxLabelWidth - labelMargin;
+                    if (d.type === 'tier2') availableWidth = maxLabelWidth - indentTier2 - labelMargin;
+                    if (d.type === 'tier3') availableWidth = maxLabelWidth - indentTier3 - labelMargin;
+                    wrapText(name, availableWidth, d.height);
+                });
+
+            // Barras de Tareas (fondo)
+            items.append("rect")
+                .attr("class", "task-bar")
+                .attr("x", d => {
+                    if (d.type === 'tier1') return xScale(parseDate(d.data.start)) + 20+20;
+                    if (d.type === 'tier2') return xScale(parseDate(d.data.start)) + indentTier2+20;
+                    if (d.type === 'tier3') return xScale(parseDate(d.data.start)) + indentTier3;
+                    return xScale(parseDate(d.data.start));
+                })
+                .attr("width", d => {
+                    const start = parseDate(d.data.start);
+                    const end = parseDate(d.data.end);
+                    return xScale(end) - xScale(start);
+                })
+                .attr("height", barHeight)
+                .attr("y", d => (d.height - barHeight) / 2)
+                .attr("fill", d => {
+                    if (d.type === 'tier1') return '#4CAF50';
+                    if (d.type === 'tier2') return '#81C784';
+                    if (d.type === 'tier3') return '#AED581';
+                    return '#4CAF50';
+                })
+                .on("mouseover", function(event, d) {
+                    tooltip.transition().duration(200).style("opacity", .9);
+                    tooltip.html(`
+                        <strong>${d.data.name}</strong><br/>
+                        Inicio: ${d.data.start}<br/>
+                        Fin: ${d.data.end}<br/>
+                    `)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function(d) {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                });
+
+            // Barras de Progreso (superpuestas)
+            items.append("rect")
+                .attr("class", "progress-bar")
+                .attr("x", d => {
+                    if (d.type === 'tier1') return xScale(parseDate(d.data.start)) + 20+20;
+                    if (d.type === 'tier2') return xScale(parseDate(d.data.start)) + indentTier2+20;
+                    if (d.type === 'tier3') return xScale(parseDate(d.data.start)) + indentTier3;
+                    return xScale(parseDate(d.data.start));
+                })
+                .attr("width", d => {
+                    const totalWidth = xScale(parseDate(d.data.end)) - xScale(parseDate(d.data.start));
+                    let progress = 0;
+                    if (d.type === 'tier1') progress = d.data.overall_progress;
+                    else if (d.type === 'tier2') progress = d.data.overall_progress;
+                    else if (d.type === 'tier3') progress = d.data.progress;
+                    return totalWidth * progress;
+                })
+                .attr("height", barHeight)
+                .attr("y", d => (d.height - barHeight) / 2)
+                .attr("fill", d => {
+                    let p = 0;
+                    if (d.type === 'tier1') p = d.data.overall_progress;
+                    else if (d.type === 'tier2') p = d.data.overall_progress;
+                    else if (d.type === 'tier3') p = d.data.progress;
+                    if (p === 1.0) return '#4CAF50';
+                    if (p > 0.75) return '#66BB6A';
+                    if (p > 0.5) return '#FFC107';
+                    if (p > 0.25) return '#FFD54F';
+                    return '#FFEB3B';
+                })
+                .on("mouseover", function(event, d) {
+                    tooltip.transition().duration(200).style("opacity", .9);
+                    let progressValue = 0;
+                    if (d.type === 'tier1') progressValue = d.data.overall_progress;
+                    else if (d.type === 'tier2') progressValue = d.data.overall_progress;
+                    else if (d.type === 'tier3') progressValue = d.data.progress;
+                    const formattedProgress = (progressValue * 100).toFixed(0) + '%';
+                    const observationText = d.data.Observación;
+                    let observationHtml = '';
+                    if (observationText) {
+                        const points = observationText.split(';');
+                        observationHtml = '<strong>Observaciones:</strong><ul style="text-align: justify;">';
+                        points.forEach(point => {
+                            const trimmedPoint = point.trim();
+                            if (trimmedPoint) {
+                                observationHtml += `<li>${trimmedPoint}</li>`;
+                            }
+                        });
+                        observationHtml += '</ul>';
+                    }
+                    tooltip.html(`
+                        <strong>${d.data.name}</strong><br/>
+                        Progreso: ${formattedProgress}<br/>
+                        ${observationHtml}
+                    `)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 28) + "px")
+                    .style("right", + "150px")
+                    .style('overflow', 'auto')
+                })
+                .on("mouseout", function(d) {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                });
+
+            // Texto de porcentaje dentro de las barras de progreso
+            items.append("text")
+                .attr("class", "progress-text")
+                .attr("x", d => {
+                    let startX = 0;
+                    if (d.type === 'tier1') startX = xScale(parseDate(d.data.start)) + 20+20;
+                    else if (d.type === 'tier2') startX = xScale(parseDate(d.data.start)) + indentTier2+20;
+                    else if (d.type === 'tier3') startX = xScale(parseDate(d.data.start)) + indentTier3;
+                    else startX = xScale(parseDate(d.data.start));
+                    const totalWidth = xScale(parseDate(d.data.end)) - xScale(parseDate(d.data.start));
+                    let progress = 0;
+                    if (d.type === 'tier1') progress = d.data.overall_progress;
+                    else if (d.type === 'tier2') progress = d.data.overall_progress;
+                    else if (d.type === 'tier3') progress = d.data.progress;
+                    const progressWidth = totalWidth * progress;
+                    if (progressWidth < 25) {
+                        return startX + progressWidth + 5;
+                    }
+                    return startX + (progressWidth / 2);
+                })
+                .attr("y", d => (d.height - barHeight) / 2 + barHeight / 2)
+                .attr("dy", "0.35em")
+                .text(d => {
+                    let progress = 0;
+                    if (d.type === 'tier1') progress = d.data.overall_progress;
+                    else if (d.type === 'tier2') progress = d.data.overall_progress;
+                    else if (d.type === 'tier3') progress = d.data.progress;
+                    return progress === 0 ? '' : (progress * 100).toFixed(0) + '%';
+                })
+                .style("fill", function(d) {
+                    const totalWidth = xScale(parseDate(d.data.end)) - xScale(parseDate(d.data.start));
+                    let progress = 0;
+                    if (d.type === 'tier1') progress = d.data.overall_progress;
+                    else if (d.type === 'tier2') progress = d.data.overall_progress;
+                    else if (d.type === 'tier3') progress = d.data.progress;
+                    const progressWidth = totalWidth * progress;
+                    return progressWidth < 25 ? "#666" : "white";
+                })
+                .style("text-anchor", function(d) {
+                    const totalWidth = xScale(parseDate(d.data.end)) - xScale(parseDate(d.data.start));
+                    let progress = 0;
+                    if (d.type === 'tier1') progress = d.data.overall_progress;
+                    else if (d.type === 'tier2') progress = d.data.overall_progress;
+                    else if (d.type === 'tier3') progress = d.data.progress;
+                    const progressWidth = totalWidth * progress;
+                    return progressWidth < 25 ? "start" : "middle";
+                });
+                // Filtrar para mostrar solo items cuyo CENSO es distinto de " "
+                svg.selectAll(".gantt-item")
+                    .style("display", d => (d.data && d.data.name && d.type === 'tier2' && d.data.name.trim() === "") ? "none" : null);
+
+            // Línea para la fecha actual
+            const today = new Date();
+            svg.append("line")
+                .attr("class", "today-line")
+                .attr("x1", xScale(today))
+                .attr("y1", -margin.top)
+                .attr("x2", xScale(today))
+                .attr("y2", height + margin.bottom);
+
+            // Etiqueta "Hoy" cerca de la línea, pero desplazada a la derecha
+            svg.append("text")
+                .attr("class", "today-label")
+                .attr("x", xScale(today) + 14)
+                .attr("y", -35)
+                .attr("text-anchor", "start")
+                .text("Hoy");
+
+            // Eje X inferior (meses con subdivisiones semanales)
+            const xAxisBottom = d3.axisBottom(xScale)
+                .tickFormat(d3.timeFormat("%b %Y"))
+                .ticks(d3.timeMonth.every(1))
+                .tickSizeOuter(0);
+
+            svg.append("g")
+                .attr("class", "x-axis axis")
+                .attr("transform", `translate(0, ${height})`)
+                .call(xAxisBottom)
+                .selectAll(".tick")
+                .each(function(d) {
+                    const monthStart = d3.timeMonth.floor(d);
+                    const nextMonthStart = d3.timeMonth.offset(monthStart, 1);
+                    d3.select(this).selectAll(".tick--week")
+                        .data(d3.timeWeek.range(monthStart, nextMonthStart))
+                        .enter()
+                        .append("line")
+                        .attr("class", "tick--week")
+                        .attr("x1", weekDate => xScale(weekDate) - xScale(monthStart))
+                        .attr("y1", 0)
+                        .attr("x2", weekDate => xScale(weekDate) - xScale(monthStart))
+                        .attr("y2", 6)
+                        .style("stroke", "#ccc");
+                });
 
 
-        // Línea para la fecha actual
-        const today = new Date(); // Fecha y hora actuales del sistema del usuario.
-        svg.append("line")
-            .attr("class", "today-line")
-            .attr("x1", xScale(today))
-            .attr("y1", -margin.top)
-            .attr("x2", xScale(today))
-            .attr("y2", height + margin.bottom);
+            // Eje X superior (meses con subdivisiones semanales)
+            const xAxisTop = d3.axisTop(xScale)
+                .tickFormat(d3.timeFormat("%b %Y"))
+                .ticks(d3.timeMonth.every(1))
+                .tickSizeOuter(0);
 
-        // Etiqueta "Hoy" cerca de la línea, pero desplazada a la derecha
-        svg.append("text")
-            .attr("class", "today-label")
-            .attr("x", xScale(today) + 14) // 8px a la derecha de la línea
-            .attr("y", -35)
-            .attr("text-anchor", "start")
-            .text("Hoy");
-
-        // Eje X inferior (meses con subdivisiones semanales)
-        const xAxisBottom = d3.axisBottom(xScale)
-            .tickFormat(d3.timeFormat("%b %Y"))
-            .ticks(d3.timeMonth.every(1)) // Ticks principales para los meses
-            .tickSizeOuter(0);
-
-        svg.append("g")
-            .attr("class", "x-axis axis")
-            .attr("transform", `translate(0, ${height})`)
-            .call(xAxisBottom)
-            .selectAll(".tick") // Seleccionar todas las marcas de mes
-            .each(function(d) {
-                const monthStart = d3.timeMonth.floor(d);
-                const nextMonthStart = d3.timeMonth.offset(monthStart, 1);
-                // Añadir ticks de semanas dentro de cada tick de mes
-                d3.select(this).selectAll(".tick--week")
-                    .data(d3.timeWeek.range(monthStart, nextMonthStart))
-                    .enter()
-                    .append("line")
-                    .attr("class", "tick--week")
-                    .attr("x1", weekDate => xScale(weekDate) - xScale(monthStart))
-                    .attr("y1", 0)
-                    .attr("x2", weekDate => xScale(weekDate) - xScale(monthStart))
-                    .attr("y2", 6) // Longitud del tick (hacia abajo)
-                    .style("stroke", "#ccc"); // Color del tick semanal
-            });
+            svg.append("g")
+                .attr("class", "x-axis axis")
+                .call(xAxisTop)
+                .selectAll(".tick")
+                .each(function(d) {
+                    const monthStart = d3.timeMonth.floor(d);
+                    const nextMonthStart = d3.timeMonth.offset(monthStart, 1);
+                    d3.select(this).selectAll(".tick--week")
+                        .data(d3.timeWeek.range(monthStart, nextMonthStart))
+                        .enter()
+                        .append("line")
+                        .attr("class", "tick--week")
+                        .attr("x1", weekDate => xScale(weekDate) - xScale(monthStart))
+                        .attr("y1", 0)
+                        .attr("x2", weekDate => xScale(weekDate) - xScale(monthStart))
+                        .attr("y2", -6)
+                        .style("stroke", "#ccc");
+                });
 
 
-        // Eje X superior (meses con subdivisiones semanales) - Ahora idéntico al inferior
-        const xAxisTop = d3.axisTop(xScale)
-            .tickFormat(d3.timeFormat("%b %Y"))
-            .ticks(d3.timeMonth.every(1)) // Ticks principales para los meses
-            .tickSizeOuter(0);
+            // Asegurarse de que el contenedor del gráfico tenga la altura correcta
+            d3.select(".chart-container")
+                .style("height", `${window.innerHeight - d3.select(".header-section").node().offsetHeight }px`);
 
-        svg.append("g")
-            .attr("class", "x-axis axis") // Mismo estilo 'axis' que el de abajo
-            .call(xAxisTop)
-            .selectAll(".tick") // Seleccionar todas las marcas de mes
-            .each(function(d) {
-                const monthStart = d3.timeMonth.floor(d);
-                const nextMonthStart = d3.timeMonth.offset(monthStart, 1);
-                // Añadir ticks de semanas dentro de cada tick de mes
-                d3.select(this).selectAll(".tick--week")
-                    .data(d3.timeWeek.range(monthStart, nextMonthStart))
-                    .enter()
-                    .append("line")
-                    .attr("class", "tick--week")
-                    .attr("x1", weekDate => xScale(weekDate) - xScale(monthStart))
-                    .attr("y1", 0)
-                    .attr("x2", weekDate => xScale(weekDate) - xScale(monthStart))
-                    .attr("y2", -6) // Longitud del tick (hacia arriba)
-                    .style("stroke", "#ccc"); // Color del tick semanal
-            });
+            // Indicador de Progreso General del Proyecto
+            function updateProjectOverallProgress() {
+                let totalWeightedProgress = 0;
+                let totalWeight = 0;
+                projectData2.tasks.forEach(task => {
+                    totalWeightedProgress += task.overall_progress;
+                    totalWeight += 1;
+                });
+                const overallProjectProgress = totalWeight > 0 ? (totalWeightedProgress / totalWeight) * 100 : 0;
+                d3.select("#projectProgressBarFill")
+                    .style("width", `${overallProjectProgress.toFixed(0)}%`)
+                    .text(`${overallProjectProgress.toFixed(0)}%`);
+            }
+            updateProjectOverallProgress();
 
-
-        // Asegurarse de que el contenedor del gráfico tenga la altura correcta
-        d3.select(".chart-container")
-            .style("height", `${window.innerHeight - d3.select(".header-section").node().offsetHeight - 40}px`);
-
-        // Indicador de Progreso General del Proyecto (se mantiene igual)
-        function updateProjectOverallProgress() {
-            let totalWeightedProgress = 0;
-            let totalWeight = 0;
-            projectData2.tasks.forEach(task => {
-                totalWeightedProgress += task.overall_progress;
-                totalWeight += 1;
-            });
-            const overallProjectProgress = totalWeight > 0 ? (totalWeightedProgress / totalWeight) * 100 : 0;
-            d3.select("#projectProgressBarFill")
-                .style("width", `${overallProjectProgress.toFixed(0)}%`)
-                .text(`${overallProjectProgress.toFixed(0)}%`);
-        }
-        updateProjectOverallProgress();
-
-        // Recargar la página si se cambia el tamaño de la ventana para recalcular el gráfico
-        window.addEventListener('resize', () => { location.reload(); });
-});
-        
-    </script>
-    <script>
-        let navegador = navigator.userAgent;
-        if (
-            //navigator.userAgent.match(/Android/i) || navigator.userAgent.match(/iPhone/i) || navigator.userAgent.match(/iPod/i) || 
-            window.innerWidth <= 780) {
-            alert("Parece que estás usando un dispositivo de pantalla pequeña. Te sugerimos activar la opción 'Sitio para computadora' en las opciones de tu navegador.");
-        } else {
-            console.log('')
-        }
-    </script>
+            // Recargar la página si se cambia el tamaño de la ventana para recalcular el gráfico
+            window.addEventListener('resize', () => { location.reload(); });
+        });
+        </script>
+        <script>
+            let navegador = navigator.userAgent;
+            if (window.innerWidth <= 780) {
+                alert("Parece que estás usando un dispositivo de pantalla pequeña. Te sugerimos activar la opción 'Sitio para computadora' en las opciones de tu navegador.");
+            } else {
+                console.log(' ')
+            }
+        </script>
 </body>
 </html>
