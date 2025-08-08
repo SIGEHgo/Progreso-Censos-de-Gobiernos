@@ -13,10 +13,16 @@ datos = datos |>
   dplyr::mutate(dplyr::across(dplyr::everything(), ~ dplyr::na_if(.x, "N/A")))
 
 datos = datos |> 
-  dplyr::mutate(Observación = paste0("Semana 1: ", `Semana 1`, "; Semana 2:", `Semana 2`, "; Semana 3: ", `Semana 3`, "; Semana 4: ", `Semana 4`),
+  dplyr::rowwise() |> 
+  dplyr::mutate(Observación = paste0(
+                                    ifelse(!is.na(`Semana 1`) ,paste0("Semana 1:", `Semana 1`),"" ),
+                                    ifelse(!is.na(`Semana 2`) ,paste0("; Semana 2:", `Semana 2`),"" ),
+                                    ifelse(!is.na(`Semana 3`) ,paste0("; Semana 3:", `Semana 3`),"" ),
+                                    ifelse(!is.na(`Semana 4`) ,paste0("; Semana 4:", `Semana 4`),"" )                                     ),
                 Observación = dplyr::if_else(condition = Observación == "Semana 1: NA; Semana 2:NA; Semana 3: NA; Semana 4: NA", true = NA, false = Observación),
                 Observación = dplyr::if_else(condition = is.na(Observación), true = Estatus, false = Observación)) |> 
-  dplyr::select(-Estatus, -`Semana 1`, -`Semana 2`, -`Semana 3`, -`Semana 4`)
+  dplyr::select(-Estatus, -`Semana 1`, -`Semana 2`, -`Semana 3`, -`Semana 4`) |> 
+  dplyr::ungroup()
   
 datos = datos |> 
   dplyr::mutate(Proceso = gsub(pattern = "%", replacement = "", x = Proceso),
@@ -44,3 +50,4 @@ datos = datos |>
                               "Recuperación de firmas yformalización de cuestionarios.",
                               "Difusión de resultados"))
 
+datos |> openxlsx::write.xlsx("Datos/Copia de Listado de enlaces080825.xlsx")
